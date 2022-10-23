@@ -1,17 +1,16 @@
-mod byte_start_with;
+mod bytes_trim;
 
-use byte_start_with::ByteStartWith;
 use bytes::BytesMut;
-use std::collections::VecDeque;
+use bytes_trim::BytesTrim;
 use std::{io, path::Path};
 use tokio::fs::{File, OpenOptions};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
 pub struct ReverseLineReader<R> {
     reader: R,
-    cursor: u64,
+    reader_cursor: u64,
     buf_size: usize,
-    remain_buf: Option<ByteStartWith>,
+    remain_buf: Option<BytesTrim>,
 }
 
 impl<R> ReverseLineReader<R>
@@ -33,43 +32,64 @@ where
 
         Ok(ReverseLineReader {
             reader: f,
-            cursor: meta.len(),
+            reader_cursor: meta.len(),
             buf_size,
             remain_buf: None,
         })
     }
 
-    pub async fn read_rev_line(&mut self) -> io::Result<Option<BytesMut>> {
-        let mut full_line_buffer: VecDeque<BytesMut> = VecDeque::new();
+    pub async fn read_rev_line(&mut self) -> io::Result<Option<BytesTrim>> {
+        let mut full_line_buffer: Vec<BytesTrim> = Vec::new();
 
         loop {
-            if self.cursor == 0 {
+            if self.reader_cursor == 0 {
                 break;
             }
 
-            let new_cursor = self.cursor.saturating_sub(self.buf_size as u64);
-            self.reader.seek(io::SeekFrom::Start(new_cursor)).await?;
+            let buffer_viewer: BytesTrim;
 
-            let real_buf_size = self.cursor - new_cursor;
-            let mut buffer = BytesMut::with_capacity(real_buf_size as usize);
-            self.cursor = new_cursor;
+            // remain_buf가 남아있는 경우 그것부터 먼저 처리.
+            // 남아있지 않은 경우 reader로부터 읽어들임.
+            if let Some(remain_buf) = self.remain_buf.take() {
+                buffer_viewer = remain_buf;
+            } else {
+                // 커서 위치에서 buf_size를 뺌. 이 값이 0 미만인 경우 0이 됨.
+                let new_cursor = self.reader_cursor.saturating_sub(self.buf_size as u64);
+                self.reader.seek(io::SeekFrom::Start(new_cursor)).await?;
 
-            self.reader.read_buf(&mut buffer).await?;
-            let find_result = buffer.iter().enumerate().rev().find(|(_, c)| **c == b'\n');
+                let real_buf_size = self.reader_cursor - new_cursor; // 실제 읽어들여야 할 크기
+                let mut buffer = BytesMut::with_capacity(real_buf_size as usize);
+                self.reader_cursor = new_cursor;
 
-            let Some((pos, _)) = find_result else {
-                full_line_buffer.push_front(buffer);
-                continue;
-            };
+                self.reader.read_buf(&mut buffer).await?;
+                buffer_viewer = BytesTrim::new_with_bytes(buffer);
+            }
+
+            let find_result = buffer_viewer
+                .iter()
+                .enumerate()
+                .rev()
+                .find(|(_, c)| **c == b'\n');
+
+            // 줄바꿈을 찾은 경우 저장해놓고 break
+            // 찾지 못한 경우 현재 버퍼를 full_line_buffer에 저장해놓고 계속 탐색
+            if let Some((pos, _)) = find_result {
+                full_line_buffer.push(buffer_viewer.slice(pos..));
+                self.remain_buf = Some(buffer_viewer.slice(..pos));
+                break;
+            } else {
+                full_line_buffer.push(buffer_viewer);
+            }
         }
 
+        // 버퍼 목록에 쌓여있는 데이터 직렬화
         let line_size = full_line_buffer.iter().fold(0, |acc, v| acc + v.len());
         let mut ret = BytesMut::with_capacity(line_size);
 
-        while let Some(buf) = full_line_buffer.pop_back() {
-            ret.extend_from_slice(&buf);
+        for buf in full_line_buffer.iter().rev() {
+            ret.extend_from_slice(buf);
         }
 
-        Ok(Some(ret))
+        Ok(Some(BytesTrim::new_with_bytes(ret)))
     }
 }
