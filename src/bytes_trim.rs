@@ -1,11 +1,11 @@
 use bytes::BytesMut;
 use ouroboros::self_referencing;
-use std::rc::Rc;
+use std::ops::Deref;
 use std::slice::SliceIndex;
 
 #[self_referencing]
 pub struct BytesTrim {
-    bytes: Rc<BytesMut>,
+    bytes: BytesMut,
     #[borrows(bytes)]
     bytes_view: &'this [u8],
 }
@@ -13,7 +13,7 @@ pub struct BytesTrim {
 impl BytesTrim {
     /// BytesMut를 사용하여 ByteTrimWith 초기화.
     pub fn new_with_bytes(bytes: BytesMut) -> Self {
-        BytesTrim::new(Rc::new(bytes), |bytes| bytes)
+        BytesTrim::new(bytes, |bytes| bytes)
     }
 
     /// BytesMut를 사용하여 ByteTrimWith 초기화. 슬라이스를 사용하여 뷰어로 사용
@@ -21,15 +21,14 @@ impl BytesTrim {
     where
         I: SliceIndex<[u8], Output = [u8]>,
     {
-        BytesTrim::new(Rc::new(bytes), |bytes| &bytes[index])
+        BytesTrim::new(bytes, |bytes| &bytes[index])
     }
 
-    /// self로부터 슬라이싱하여 새로운 뷰어를 생성.
-    pub fn slice<I>(&self, index: I) -> BytesTrim
+    pub fn self_slice<I>(&mut self, index: I)
     where
         I: SliceIndex<[u8], Output = [u8]>,
     {
-        BytesTrim::new(self.borrow_bytes().clone(), |bytes| &bytes[index])
+        self.with_bytes_view_mut(|view| *view = &view[index]);
     }
 }
 
@@ -47,11 +46,17 @@ impl<'a> From<&'a BytesTrim> for &'a [u8] {
     }
 }
 
-impl std::ops::Deref for BytesTrim {
+impl Deref for BytesTrim {
     type Target = [u8];
 
     #[inline]
     fn deref(&self) -> &Self::Target {
         self.as_ref()
+    }
+}
+
+impl Default for BytesTrim {
+    fn default() -> Self {
+        BytesTrim::new(Default::default(), |bytes| bytes)
     }
 }

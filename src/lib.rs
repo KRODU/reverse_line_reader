@@ -40,6 +40,7 @@ where
 
     pub async fn read_rev_line(&mut self) -> io::Result<Option<BytesTrim>> {
         let mut full_line_buffer: Vec<BytesTrim> = Vec::new();
+        let mut last_buffer: Option<(BytesTrim, usize)> = None;
 
         loop {
             if self.reader_cursor == 0 {
@@ -74,8 +75,7 @@ where
             // 줄바꿈을 찾은 경우 저장해놓고 break
             // 찾지 못한 경우 현재 버퍼를 full_line_buffer에 저장해놓고 계속 탐색
             if let Some((pos, _)) = find_result {
-                full_line_buffer.push(buffer_viewer.slice(pos..));
-                self.remain_buf = Some(buffer_viewer.slice(..pos));
+                last_buffer = Some((buffer_viewer, pos));
                 break;
             } else {
                 full_line_buffer.push(buffer_viewer);
@@ -83,12 +83,25 @@ where
         }
 
         // 버퍼 목록에 쌓여있는 데이터 직렬화
-        let line_size = full_line_buffer.iter().fold(0, |acc, v| acc + v.len());
+        // 먼저 버퍼 사이즈를 계산한 뒤 처리
+        let mut line_size = full_line_buffer.iter().fold(0, |acc, v| acc + v.len());
+        if let Some((last_buf, pos)) = &last_buffer {
+            line_size += last_buf.len() - pos;
+        }
         let mut ret = BytesMut::with_capacity(line_size);
+
+        if let Some((mut last_buf, pos)) = last_buffer {
+            ret.extend_from_slice(&last_buf[pos..]);
+            last_buf.self_slice(..pos);
+            self.remain_buf = Some(last_buf);
+        }
 
         for buf in full_line_buffer.iter().rev() {
             ret.extend_from_slice(buf);
         }
+
+        // 반드시 일치할 필요는 없지만 재할당 방지 및 메모리 낭비 방지용
+        debug_assert_eq!(line_size, ret.len());
 
         Ok(Some(BytesTrim::new_with_bytes(ret)))
     }
