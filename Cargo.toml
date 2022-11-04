@@ -9,3 +9,6 @@ edition = "2021"
 tokio = { version = "1", features = ["fs", "io-util"] }
 bytes = "1"
 ouroboros = "0.15"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "macros"] }

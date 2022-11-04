@@ -60,3 +60,29 @@ impl Default for BytesTrim {
         BytesTrim::new(Default::default(), |bytes| bytes)
     }
 }
+
+impl PartialEq for BytesTrim {
+    fn eq(&self, other: &Self) -> bool {
+        self.borrow_bytes_view() == other.borrow_bytes_view()
+    }
+}
+
+impl Eq for BytesTrim {}
+
+impl PartialEq<&[u8]> for BytesTrim {
+    fn eq(&self, other: &&[u8]) -> bool {
+        self.borrow_bytes_view() == other
+    }
+}
+
+impl std::fmt::Debug for BytesTrim {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BytesTrim")
+            .field("bytes_view", self.borrow_bytes_view())
+            .field(
+                "bytes_view_str",
+                &String::from_utf8_lossy(self.borrow_bytes_view()),
+            )
+            .finish()
+    }
+}
